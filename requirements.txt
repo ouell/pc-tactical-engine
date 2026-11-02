@@ -1,0 +1,23 @@
+# Captura de Baixa Latência (DirectX Desktop Duplication API)
+dxcam>=0.1.1
+numpy>=1.26.0
+
+# Visão Computacional e Geometria Espacial
+opencv-python>=4.9.0
+scipy>=1.12.0
+shapely>=2.0.0
+
+# Modelagem e Persistência Telemétrica Colunar
+pydantic>=2.6.0
+duckdb>=0.10.0
+
+# Motor de Alertas e Áudio TTS
+pyttsx3>=2.90
+
+# Servidor de Telemetria e WebSockets (Segunda Tela)
+fastapi>=0.110.0
+uvicorn>=0.28.0
+websockets>=12.0
+
+# Testes e Qualidade
+pytest>=8.0.0

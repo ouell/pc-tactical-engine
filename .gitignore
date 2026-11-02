@@ -1,0 +1,66 @@
+# ==============================================================================
+# AMBIENTE VIRTUAL E RUNTIMES PYTHON
+# ==============================================================================
+.venv/
+venv/
+env/
+ENV/
+*.venv
+
+# Byte-compiled / otimizações do interpretador
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==============================================================================
+# PERSISTÊNCIA TELEMÉTRICA E DADOS LOCAIS (DUCKDB / SQLITE)
+# ==============================================================================
+# Ignora arquivos de banco e logs WAL, mas preserva a pasta data/ via .gitkeep
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+*.sqlite3
+data/*
+!data/.gitkeep
+
+# ==============================================================================
+# MÍDIAS, GRAVAÇÕES E SAMPLES DE TESTE
+# ==============================================================================
+# Ignora capturas brutas de tela e gravações de vídeo pesadas
+recordings/
+captures/
+*.mp4
+*.avi
+*.mkv
+tests/samples/*
+!tests/samples/.gitkeep
+!tests/samples/sample_match.png
+
+# ==============================================================================
+# TESTES, COBERTURA E QUALIDADE
+# ==============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ==============================================================================
+# ESPECÍFICO DO SISTEMA OPERACIONAL (WINDOWS / MAC)
+# ==============================================================================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ==============================================================================
+# IDES E EDITORES (VSCODE, PYCHARM, ANTIGRAVITY)
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
