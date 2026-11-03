@@ -18,6 +18,7 @@ LENGTH_M, WIDTH_M = PITCH_SIZE_M
 _SCALE = np.array(PITCH_SIZE_M)
 _PITCH = shapely.box(0.0, 0.0, LENGTH_M, WIDTH_M)
 _DEFAULT = TacticalThresholds()
+_KEEPER_LEAD_M = 3.0  # o goleiro fica atrás da linha; sem essa folga, é um zagueiro
 
 
 def progress_m[T: (float, NDArray[np.float64])](x_m: T, attacks_right: bool) -> T:
@@ -40,12 +41,15 @@ def voronoi_cells(xy: Points) -> NDArray[np.object_]:
 def team_shape(xy: Points, attacks_right: bool) -> TeamShape:
     """Profundidade do bloco e espaço entre os zagueiros centrais.
 
-    Considera goleiro o jogador mais recuado e linha de zaga os 4 seguintes.
+    Goleiro é o jogador mais recuado, se estiver a pelo menos `_KEEPER_LEAD_M` atrás do
+    seguinte; senão (goleiro fora do radar), todos são de linha. Zaga = os 4 mais recuados.
     """
     if len(xy) < 3:
         return TeamShape(depth_m=0.0, cb_gap_m=0.0)
     prog = progress_m(xy[:, 0], attacks_right)
-    outfield = np.argsort(prog)[1:]
+    order = np.argsort(prog)
+    has_keeper = prog[order[1]] - prog[order[0]] >= _KEEPER_LEAD_M
+    outfield = order[1:] if has_keeper else order
     back_line = outfield[:4]
     center_backs = back_line[np.argsort(np.abs(xy[back_line, 1] - WIDTH_M / 2))[:2]]
     return TeamShape(
