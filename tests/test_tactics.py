@@ -69,6 +69,13 @@ def test_team_shape_measures_center_back_gap_and_depth() -> None:
     assert shape.depth_m == pytest.approx(40.0)
 
 
+def test_team_shape_without_keeper_on_the_radar_keeps_the_back_line() -> None:
+    spots = [*defense(Team.A, 20.0, cb_gap=10.0)[1:], (Team.A, 60.0, 34.0)]
+    shape = analyze(make_frame(spots)).shapes[Team.A]
+    assert shape.cb_gap_m == pytest.approx(10.0)
+    assert shape.depth_m == pytest.approx(40.0)
+
+
 @pytest.mark.parametrize(("rival_y", "is_open"), [(34.0, False), (36.0, False), (50.0, True)])
 def test_rival_inside_the_lane_blocks_the_pass(rival_y: float, is_open: bool) -> None:
     spots = [(Team.A, 40.0, 34.0), (Team.A, 60.0, 34.0), (Team.B, 50.0, rival_y)]
