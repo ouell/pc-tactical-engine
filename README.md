@@ -226,9 +226,9 @@ O desenvolvimento do **FC-Tactical-Engine** é guiado por marcos incrementais co
 | **Marco 1** | **Camada de Ingestão Visual (`dxcam` 60 FPS, Win32 DPI & Multi-ROI Dinâmico)** | `< 4ms` / frame | 🧪 **Implementado** (validar no Windows) |
 | **Marco 2** | **Visão Computacional & Rastreamento de Entidades (Radar HSV + Estado do Jogo)** | `< 3ms` / frame | ⏳ Planejado |
 | **Marco 3** | **Motor Tático Espacial (Diagramas de Voronoi, Linhas de Zaga & Rede de Passes)** | `< 5ms` / ciclo | ✅ **Implementado** |
-| **Marco 4** | **"Coach Virtual" (Motor de Heurísticas, Debounce/Cooldown & Áudio TTS)** | `< 100ms` disparo | ✅ **Implementado** |
+| **Marco 4** | **"Coach Virtual" (Motor de Heurísticas, Debounce/Cooldown & Áudio TTS)** | `< 100ms` disparo | 🧪 **Implementado** (voz e latência a validar no Windows) |
 | **Marco 5** | **Ingestão Telemétrica Colunar (`DuckDB` Bulk Insert) & Analytics Pós-Jogo** | `< 50ms` query | ✅ **Implementado** |
-| **Marco 6** | **Segunda Tela em Tempo Real (`FastAPI` + `WebSockets` + Canvas 2D) & Orquestração** | `< 15ms` end-to-end | ✅ **Implementado** (com simulador) |
+| **Marco 6** | **Segunda Tela em Tempo Real (`FastAPI` + `WebSockets` + Canvas 2D) & Orquestração** | `< 15ms` end-to-end | 🚧 **Parcial**: painel e orquestração com o simulador; captura não integrada, metas de latência e CPU não medidas |
 
 📖 Para consultar o detalhamento técnico completo de cada entregável e seus respectivos critérios de aceite, acesse o documento de planejamento: **[`docs/roadmap.md`](docs/roadmap.md)**.
 

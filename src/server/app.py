@@ -47,6 +47,11 @@ class TelemetryHub:
             return self._version, self._payload
 
 
+async def _until_disconnect(websocket: WebSocket) -> None:
+    while (await websocket.receive())["type"] != "websocket.disconnect":
+        pass  # o painel não envia nada; qualquer mensagem é ignorada
+
+
 def create_app(hub: TelemetryHub, stream_fps: int = STREAM_FPS) -> FastAPI:
     app = FastAPI(title="FC-Tactical-Engine")
 
@@ -57,15 +62,20 @@ def create_app(hub: TelemetryHub, stream_fps: int = STREAM_FPS) -> FastAPI:
     @app.websocket("/ws")
     async def stream(websocket: WebSocket) -> None:
         await websocket.accept()
+        # Escuta o socket em paralelo: sem isso, um cliente que cai só é notado no próximo
+        # envio, e com o motor parado (nada novo para enviar) o laço nunca termina.
+        disconnected = asyncio.create_task(_until_disconnect(websocket))
         sent = 0
         try:
-            while True:
+            while not disconnected.done():
                 version, payload = hub.latest()
                 if payload is not None and version != sent:
                     await websocket.send_text(payload)
                     sent = version
-                await asyncio.sleep(1 / stream_fps)
+                await asyncio.wait({disconnected}, timeout=1 / stream_fps)
         except (WebSocketDisconnect, OSError):
             pass  # painel fechado ou rede caiu: o navegador reconecta sozinho
+        finally:
+            disconnected.cancel()
 
     return app

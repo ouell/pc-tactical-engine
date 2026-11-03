@@ -58,7 +58,20 @@ def main() -> None:
 
         source = realtime(RadarSimulator(fps=TARGET_FPS), TARGET_FPS)
         engine = Engine(source, hub, audio=audio, writer=writer)
-        engine_thread = threading.Thread(target=engine.run, args=(stop,), name="engine")
+        config = uvicorn.Config(
+            create_app(hub), host=args.host, port=args.port, log_level="warning"
+        )
+        server = uvicorn.Server(config)
+
+        def run_engine() -> None:
+            try:
+                engine.run(stop)
+            except Exception:
+                log.exception("o motor parou com erro; encerrando")
+            finally:
+                server.should_exit = True  # painel sem motor só mostraria um frame congelado
+
+        engine_thread = threading.Thread(target=run_engine, name="engine")
         engine_thread.start()
 
         local_url = f"http://localhost:{args.port}"
@@ -69,10 +82,12 @@ def main() -> None:
             threading.Timer(1.0, webbrowser.open, args=(local_url,)).start()
 
         try:
-            uvicorn.run(create_app(hub), host=args.host, port=args.port, log_level="warning")
+            server.run()
         finally:
             stop.set()
             engine_thread.join(timeout=2.0)  # para o motor antes de fechar banco e áudio
+            if engine_thread.is_alive():
+                log.warning("o motor não parou em 2 s; frames depois daqui não são gravados")
 
 
 if __name__ == "__main__":

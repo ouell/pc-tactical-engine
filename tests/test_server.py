@@ -1,9 +1,11 @@
+import asyncio
 import itertools
 import json
 import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from starlette.routing import WebSocketRoute
 
 from src.orchestrator import Engine, realtime
 from src.server import TelemetryHub, create_app
@@ -23,6 +25,22 @@ def test_dashboard_page_is_served() -> None:
     response = TestClient(create_app(TelemetryHub())).get("/")
     assert response.status_code == 200
     assert "<canvas" in response.text
+
+
+def test_stream_ends_when_the_client_leaves_even_without_new_frames() -> None:
+    """Com o motor parado nada é enviado; antes, o handler nunca percebia a saída do cliente
+    e cada painel fechado deixava uma task presa, travando o Ctrl+C do uvicorn."""
+
+    class LeavingClient:
+        async def accept(self) -> None:
+            pass
+
+        async def receive(self) -> dict[str, str]:
+            return {"type": "websocket.disconnect"}
+
+    app = create_app(TelemetryHub())
+    stream = next(r.endpoint for r in app.routes if isinstance(r, WebSocketRoute))
+    asyncio.run(asyncio.wait_for(stream(LeavingClient()), timeout=1.0))
 
 
 def test_engine_feeds_dashboard_coach_and_database(tmp_path: Path) -> None:
