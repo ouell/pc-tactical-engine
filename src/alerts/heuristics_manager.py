@@ -11,7 +11,11 @@ MESSAGES: dict[EventType, str] = {
     EventType.PASSE_RUPTURA: "Passe livre na frente!",
     EventType.TIME_ESPACADO: "Time espaçado, compacta!",
 }
-PRIORITY: tuple[EventType, ...] = tuple(MESSAGES)  # mais urgente primeiro
+PRIORITY: tuple[EventType, ...] = (  # mais urgente primeiro
+    EventType.CENTRO_EXPOSTO,
+    EventType.PASSE_RUPTURA,
+    EventType.TIME_ESPACADO,
+)
 ATTACKING: frozenset[EventType] = frozenset({EventType.PASSE_RUPTURA})
 
 
@@ -27,24 +31,32 @@ class CoachHeuristics:
 
     - Debounce: o evento precisa aparecer em frames seguidos por `debounce_s`.
     - Cooldown: o mesmo tipo não repete antes de `cooldown_s`.
-    - Intervalo global: nenhum alerta antes de `min_gap_s` do anterior.
+    - Intervalo global: nenhum alerta antes de `min_gap_s` do anterior, a não ser que
+      seja mais urgente que ele.
     - Contexto: vencendo nos minutos finais, alertas de ataque são suprimidos.
     """
 
     def __init__(self, config: CoachConfig | None = None) -> None:
         self.config = config or CoachConfig()
+        self._reset()
+
+    def _reset(self) -> None:
         self._active_since: dict[EventType, float] = {}
         self._last_fired: dict[EventType, float] = {}
         self._last_alert = -math.inf
+        self._last_rank = len(PRIORITY)  # posição do último alerta em PRIORITY
 
     def process(self, frame: FrameTelemetry, events: list[TacticalEvent]) -> Alert | None:
         now, cfg = frame.timestamp, self.config
+        if now < self._last_alert:  # relógio recomeçou (nova partida): esquece o histórico
+            self._reset()
         # Evento que sumiu reinicia o debounce.
         self._active_since = {e.type: self._active_since.get(e.type, now) for e in events}
+        candidates = PRIORITY
         if now - self._last_alert < cfg.min_gap_s:
-            return None
+            candidates = PRIORITY[: self._last_rank]  # só fura o intervalo o mais urgente
 
-        for kind in PRIORITY:
+        for kind in candidates:
             since = self._active_since.get(kind)
             if (
                 since is None
@@ -54,6 +66,7 @@ class CoachHeuristics:
             ):
                 continue
             self._last_fired[kind] = self._last_alert = now
+            self._last_rank = PRIORITY.index(kind)
             return Alert(kind, MESSAGES[kind], now)
         return None
 
