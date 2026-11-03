@@ -5,6 +5,7 @@ Benchmark no Windows, com o jogo aberto:
 """
 
 import argparse
+import logging
 import threading
 import time
 from collections.abc import Mapping
@@ -21,11 +22,13 @@ from src.capture.win32_dpi import enable_dpi_awareness
 
 type Image = NDArray[np.uint8]
 
+log = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class CapturedFrame:
     frame_id: int
-    timestamp: float  # time.perf_counter() quando o frame chegou da GPU
+    timestamp: float  # time.perf_counter() quando a thread recebeu o frame do dxcam
     crops: Mapping[str, Image]  # BGR, por nome de ROI
 
 
@@ -76,6 +79,12 @@ class ScreenCapture:
         self.stats = CaptureStats()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._camera: Any = None
+
+    @property
+    def running(self) -> bool:
+        """Falso se a captura parou ou a thread morreu (o erro vai para o log)."""
+        return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> None:
         enable_dpi_awareness()
@@ -85,7 +94,9 @@ class ScreenCapture:
         if camera is None:
             raise RuntimeError("dxcam não conseguiu abrir o monitor (DXGI)")
         camera.start(target_fps=self.fps)
+        self._camera = camera
         self.stats = CaptureStats()
+        self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, args=(camera,), name="screen-capture", daemon=True
         )
@@ -93,24 +104,30 @@ class ScreenCapture:
 
     def stop(self) -> None:
         self._stop.set()
+        camera, self._camera = self._camera, None
+        if camera is None:
+            return
+        # Parar a câmera aqui destrava o get_latest_frame, que espera um frame novo
+        # e com a tela parada (pausa, menu) não recebe nenhum.
+        camera.stop()
         if self._thread:
             self._thread.join(timeout=1.0)
+        camera.release()
 
     def _run(self, camera: Any) -> None:
+        frame_id = 0
         try:
-            frame_id = 0
             while not self._stop.is_set():
                 frame = camera.get_latest_frame(copy=False)  # bloqueia até o próximo frame
-                if frame is None:
+                if frame is None or self._stop.is_set():
                     break
                 received = time.perf_counter()
                 crops = crop_rois(frame, self.rois)
                 self.frames.put(CapturedFrame(frame_id, received, crops))
                 self.stats.record(time.perf_counter() - received)
                 frame_id += 1
-        finally:
-            camera.stop()
-            camera.release()
+        except Exception:
+            log.exception("Captura interrompida por erro")
 
     def __enter__(self) -> Self:
         self.start()
