@@ -7,14 +7,14 @@ python -m src.storage.post_match_reports --match ID --export parquet
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import duckdb
 import numpy as np
 from numpy.typing import NDArray
 
 from config.settings import DATA_DIR
-from src.models import Team
+from src.models import GameState, Team
 from src.storage.telemetry_db import DB_FILE
 
 type ExportFormat = Literal["parquet", "csv"]
@@ -28,7 +28,7 @@ class MatchSummary:
     match_id: str
     frames: int
     duration_s: float
-    control_a: float | None  # média da fração do campo dominada pelo time A
+    control_a: float | None  # média da fração do campo dominada pelo time A (bola rolando)
     possession_a: float | None  # fração dos frames com posse definida em que a bola era do A
     events: dict[str, int]
 
@@ -43,15 +43,18 @@ def latest_match(conn: duckdb.DuckDBPyConnection) -> str | None:
 
 
 def summarize(conn: duckdb.DuckDBPyConnection, match_id: str) -> MatchSummary:
+    # Replay, pausa e bola parada não contam para domínio e posse.
     row = conn.execute(
         """
-        SELECT count(*), coalesce(max(ts) - min(ts), 0), avg(control_a),
-               avg(CASE possession WHEN 'A' THEN 1.0 WHEN 'B' THEN 0.0 END)
-        FROM frames WHERE match_id = ?
+        SELECT count(*), coalesce(max(ts) - min(ts), 0),
+               avg(control_a) FILTER (state = $live),
+               avg(CASE possession WHEN 'A' THEN 1.0 WHEN 'B' THEN 0.0 END) FILTER (state = $live)
+        FROM frames WHERE match_id = $match
         """,
-        [match_id],
+        {"match": match_id, "live": GameState.EM_ANDAMENTO},
     ).fetchone()
-    frames, duration_s, control_a, possession_a = row or (0, 0.0, None, None)
+    assert row is not None  # count(*) sempre devolve uma linha
+    frames, duration_s, control_a, possession_a = row
     events = conn.execute(
         "SELECT type, count(*) FROM events WHERE match_id = ? GROUP BY type ORDER BY 2 DESC",
         [match_id],
@@ -62,17 +65,27 @@ def summarize(conn: duckdb.DuckDBPyConnection, match_id: str) -> MatchSummary:
 def heatmap(
     conn: duckdb.DuckDBPyConnection, match_id: str, team: Team, bins: tuple[int, int] = (21, 14)
 ) -> NDArray[np.int64]:
-    """Contagem de presença por célula do campo, `grid[linha_y, coluna_x]`."""
+    """Presença por célula do campo com o time sempre atacando para a direita.
+
+    `grid[linha_y, coluna_x]`. Só conta bola rolando. Quando o time ataca para a esquerda
+    (troca de lado no intervalo), as posições são giradas 180°, que é o que a troca faz.
+    """
     nx, ny = bins
     cells = conn.execute(
         """
+        WITH pos AS (
+            SELECT CASE WHEN f.a_attacks_right = ($team = 'A') THEN t.x ELSE 1 - t.x END AS x,
+                   CASE WHEN f.a_attacks_right = ($team = 'A') THEN t.y ELSE 1 - t.y END AS y
+            FROM telemetry t
+            JOIN frames f USING (match_id, tick_id)
+            WHERE t.match_id = $match AND t.team = $team AND f.state = $live
+        )
         SELECT least(floor(x * $nx), $nx - 1)::INTEGER AS i,
                least(floor(y * $ny), $ny - 1)::INTEGER AS j,
                count(*)
-        FROM telemetry WHERE match_id = $match AND team = $team
-        GROUP BY i, j
+        FROM pos GROUP BY i, j
         """,
-        {"nx": nx, "ny": ny, "match": match_id, "team": team},
+        {"nx": nx, "ny": ny, "match": match_id, "team": team, "live": GameState.EM_ANDAMENTO},
     ).fetchall()
     grid = np.zeros((ny, nx), dtype=np.int64)
     for i, j, count in cells:
@@ -86,7 +99,7 @@ def export(
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = []
     for table in TABLES:
-        path = out_dir / f"{match_id}_{table}.{fmt}"
+        path = out_dir / Path(f"{match_id}_{table}.{fmt}").name  # `--match ../x` fica em out_dir
         relation = conn.sql(
             f"SELECT * FROM {table} WHERE match_id = $match ORDER BY tick_id",
             params={"match": match_id},
@@ -115,7 +128,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Relatório pós-jogo.")
     parser.add_argument("--db", type=Path, default=DB_FILE)
     parser.add_argument("--match", help="match_id (padrão: a partida mais recente)")
-    parser.add_argument("--export", choices=["parquet", "csv"])
+    parser.add_argument("--export", choices=get_args(ExportFormat.__value__))
     parser.add_argument("--out", type=Path, default=DATA_DIR / "exports")
     args = parser.parse_args()
 
@@ -131,7 +144,7 @@ def main() -> None:
         print(f"Posse do time A: {_percent(summary.possession_a)}")
         for kind, count in summary.events.items():
             print(f"  {kind}: {count}")
-        print("\nMapa de calor do time A (coordenadas do radar):")
+        print("\nMapa de calor do time A (atacando para a direita, bola rolando):")
         print(render_heatmap(heatmap(conn, match_id, Team.A)))
         if args.export:
             for path in export(conn, match_id, args.out, args.export):

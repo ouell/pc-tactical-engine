@@ -1,5 +1,6 @@
 """Gravação da partida no DuckDB, em lotes e fora da thread do motor."""
 
+import contextlib
 import logging
 import queue
 import threading
@@ -13,13 +14,14 @@ from typing import Any, Self
 
 import duckdb
 
-from config.settings import DATA_DIR
+from config.settings import DATA_DIR, TARGET_FPS
 from src.models import FrameTelemetry, TacticalEvent, TacticalSnapshot, Team
 
 log = logging.getLogger(__name__)
 
 DB_FILE = DATA_DIR / "telemetry.duckdb"
 BALL_ID = -1
+MAX_FLUSH_ATTEMPTS = 3  # depois disso o lote é descartado, para a memória não crescer
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS matches (
@@ -27,7 +29,7 @@ CREATE TABLE IF NOT EXISTS matches (
 );
 CREATE TABLE IF NOT EXISTS frames (
     match_id VARCHAR, tick_id BIGINT, ts DOUBLE, state VARCHAR, minute SMALLINT,
-    score_a SMALLINT, score_b SMALLINT, possession VARCHAR,
+    score_a SMALLINT, score_b SMALLINT, a_attacks_right BOOLEAN, possession VARCHAR,
     control_a DOUBLE, depth_a_m DOUBLE, cb_gap_a_m DOUBLE
 );
 CREATE TABLE IF NOT EXISTS telemetry (
@@ -76,22 +78,30 @@ class _Record:
 class TelemetryWriter:
     """`submit` só enfileira; uma thread grava tudo a cada `flush_every_s`.
 
-    A memória fica limitada ao que chega entre dois flushes, então uma partida inteira
-    não acumula nada em RAM.
+    A memória fica limitada: a fila guarda no máximo `max_pending` frames (os excedentes
+    são descartados e contados em `dropped`) e um lote que falha `MAX_FLUSH_ATTEMPTS`
+    vezes é descartado. `max_pending=0` tira o limite (importação em lote, testes).
     """
 
     def __init__(
-        self, path: Path = DB_FILE, match_id: str | None = None, flush_every_s: float = 1.0
+        self,
+        path: Path = DB_FILE,
+        match_id: str | None = None,
+        flush_every_s: float = 1.0,
+        max_pending: int = 60 * TARGET_FPS,
     ) -> None:
         self.path = path
-        self.match_id = match_id or datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.match_id = match_id or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         self.flush_every_s = flush_every_s
         self.rows_written = 0
-        self._queue: queue.SimpleQueue[_Record | None] = queue.SimpleQueue()
+        self.dropped = 0  # frames descartados (fila cheia ou lote que não gravou)
+        self._failed_flushes = 0
+        self._closed = False
+        self._queue: queue.Queue[_Record | None] = queue.Queue(max_pending)
         self._thread = threading.Thread(target=self._run, name="telemetry-db", daemon=True)
         self._frames = _Columns(
             "frames", "match_id", "tick_id", "ts", "state", "minute", "score_a", "score_b",
-            "possession", "control_a", "depth_a_m", "cb_gap_a_m",
+            "a_attacks_right", "possession", "control_a", "depth_a_m", "cb_gap_a_m",
         )  # fmt: skip
         self._telemetry = _Columns(
             "telemetry", "match_id", "tick_id", "ts", "entity_id", "team", "x", "y", "vx", "vy"
@@ -108,14 +118,31 @@ class TelemetryWriter:
         snapshot: TacticalSnapshot | None = None,
         events: Iterable[TacticalEvent] = (),
     ) -> None:
-        self._queue.put(_Record(frame, snapshot, tuple(events)))
+        if self._closed:
+            return
+        try:
+            self._queue.put_nowait(_Record(frame, snapshot, tuple(events)))
+        except queue.Full:
+            self.dropped += 1
 
     def close(self) -> None:
         """Grava o que falta e fecha o banco."""
-        self._queue.put(None)
-        self._thread.join()
+        self._closed = True
+        if self._thread.is_alive():
+            # Fila cheia por 5 s = a thread morreu entre a checagem e aqui.
+            with contextlib.suppress(queue.Full):
+                self._queue.put(None, timeout=5.0)
+            self._thread.join()
 
     def _run(self) -> None:
+        try:
+            self._write_loop()
+        except Exception:
+            log.exception("Gravação da telemetria interrompida")
+        finally:
+            self._closed = True  # sem thread, `submit` não pode encher a fila
+
+    def _write_loop(self) -> None:
         with duckdb.connect(str(self.path)) as conn:
             conn.execute(SCHEMA)
             conn.execute(
@@ -131,7 +158,11 @@ class TelemetryWriter:
                 else:
                     if record is None:
                         break
-                    self._buffer(record)
+                    try:
+                        self._buffer(record)
+                    except Exception:
+                        self.dropped += 1
+                        log.exception("Frame %s ignorado na gravação", record.frame.frame_id)
                 if time.monotonic() >= next_flush:
                     self._flush(conn)
                     next_flush = time.monotonic() + self.flush_every_s
@@ -144,12 +175,19 @@ class TelemetryWriter:
             conn.begin()
             written = sum(table.insert(conn) for table in tables)
             conn.commit()
-        except duckdb.Error:
-            conn.rollback()
-            log.exception("Falha ao gravar lote de telemetria; tento de novo no próximo flush")
-            return
+        except Exception:
+            with contextlib.suppress(duckdb.Error):
+                conn.rollback()
+            self._failed_flushes += 1
+            if self._failed_flushes < MAX_FLUSH_ATTEMPTS:
+                log.exception("Falha ao gravar lote de telemetria; tento de novo no próximo flush")
+                return
+            log.exception("Lote de telemetria descartado após %d falhas", self._failed_flushes)
+            self.dropped += len(self._frames)
+            written = 0
         for table in tables:
             table.clear()
+        self._failed_flushes = 0
         self.rows_written += written
 
     def _buffer(self, record: _Record) -> None:
@@ -164,7 +202,7 @@ class TelemetryWriter:
             depth_m, cb_gap_m = shape.depth_m, shape.cb_gap_m
         self._frames.append(
             match, tick, ts, frame.state, frame.minute, score_a, score_b,
-            possession, control_a, depth_m, cb_gap_m,
+            frame.team_a_attacks_right, possession, control_a, depth_m, cb_gap_m,
         )  # fmt: skip
         for p in frame.players:
             self._telemetry.append(match, tick, ts, p.id, p.team, p.x, p.y, p.vx, p.vy)
