@@ -7,6 +7,7 @@ Teclas: 1/2/3 escolhem a ROI, S salva em config/rois.json, Q ou Esc sai.
 """
 
 import argparse
+import time
 from pathlib import Path
 
 import cv2
@@ -29,8 +30,8 @@ def grab_screen() -> NDArray[np.uint8]:
 
     camera = dxcam.create(output_color="BGR")
     try:
-        while (frame := camera.grab()) is None:
-            pass
+        while (frame := camera.grab()) is None:  # None = tela não mudou desde o último grab
+            time.sleep(0.01)
         return frame  # type: ignore[no-any-return]
     finally:
         camera.release()
@@ -85,10 +86,11 @@ def main() -> None:
             rois[selected] = roi
         cv2.imshow(WINDOW, draw(image, rois, selected))
         left, top, right, bottom = rois[selected].to_pixels(width, height)
-        cv2.imshow(PREVIEW, image[top:bottom, left:right])
+        if right > left and bottom > top:  # ROI menor que 1 px some no arredondamento
+            cv2.imshow(PREVIEW, image[top:bottom, left:right])
 
         match chr(cv2.waitKey(30) & 0xFF).lower():
-            case key if key.isdigit() and 0 < int(key) <= len(names):
+            case key if key.isdecimal() and 0 < int(key) <= len(names):
                 selected = names[int(key) - 1]
                 set_trackbars(rois[selected])
             case "s":
