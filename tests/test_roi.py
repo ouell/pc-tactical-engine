@@ -12,23 +12,27 @@ RESOLUTIONS = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)]
 
 
 def _synthetic_screen(width: int, height: int) -> np.ndarray:
-    """Tela com um 'radar' desenhado em coordenadas relativas, como faz o HUD do jogo."""
+    """Tela com uma grade de pontos em coordenadas relativas, como o HUD do jogo escala.
+
+    A grade não depende das ROIs: um recorte deslocado pega outros pontos e falha.
+    """
     screen = np.zeros((height, width, 3), np.uint8)
-    radar = ROIConfig().radar.to_pixels(width, height)
-    cv2.rectangle(screen, radar[:2], radar[2:], (0, 120, 0), -1)
-    center = (round(0.5 * width), round(0.85 * height))
-    cv2.circle(screen, center, max(2, height // 100), (255, 255, 255), -1)
+    radius = max(2, height // 200)
+    for fx in np.arange(0.01, 1.0, 0.02):
+        for fy in np.arange(0.01, 1.0, 0.03):
+            center = (round(fx * width), round(fy * height))
+            cv2.circle(screen, center, radius, (255, 255, 255), -1)
     return screen
 
 
+@pytest.mark.parametrize("name", list(ROIConfig().named()))
 @pytest.mark.parametrize(("width", "height"), RESOLUTIONS)
-def test_radar_crop_is_resolution_invariant(width: int, height: int) -> None:
-    reference = cv2.resize(
-        crop_rois(_synthetic_screen(1920, 1080), ROIConfig())["radar"], (200, 110)
-    )
-    crop = cv2.resize(crop_rois(_synthetic_screen(width, height), ROIConfig())["radar"], (200, 110))
-    # Diferença média abaixo de 2% da escala: mesmo conteúdo, só reamostrado.
-    assert np.abs(crop.astype(int) - reference.astype(int)).mean() < 5
+def test_crop_is_resolution_invariant(width: int, height: int, name: str) -> None:
+    size = (200, 110)
+    reference = cv2.resize(crop_rois(_synthetic_screen(1920, 1080), ROIConfig())[name], size)
+    crop = cv2.resize(crop_rois(_synthetic_screen(width, height), ROIConfig())[name], size)
+    # Mesmo conteúdo, só reamostrado (≤ 7); um recorte 0,5% fora do lugar passa de 25.
+    assert np.abs(crop.astype(int) - reference.astype(int)).mean() < 10
 
 
 def test_pixels_round_trip() -> None:
