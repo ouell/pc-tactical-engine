@@ -158,6 +158,7 @@ STATUS FINAL: [100% OPERACIONAL] Ambiente pronto para desenvolvimento!
 ```powershell
 python main.py --screen                 # jogo aberto em tela cheia (Windows)
 python main.py --video partida.mp4      # vídeo gravado da partida, no ritmo do vídeo
+python main.py --video partida.mp4 --start 12:30 --speed 2   # pula até 12:30 do vídeo, 2x
 python main.py                          # radar simulado, sem o jogo
 ```
 Abre o painel em `http://localhost:8000` e mostra no terminal o endereço para abrir no tablet ou celular (mesma rede Wi-Fi; o Windows pede liberação no firewall na primeira vez). Opções: `--no-audio`, `--no-db`, `--no-browser`, `--host 127.0.0.1` (só este PC), `--port`.

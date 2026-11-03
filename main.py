@@ -2,6 +2,7 @@
 
     python main.py --screen              # jogo aberto (Windows): lê o radar da tela
     python main.py --video partida.mp4   # vídeo gravado, no ritmo do vídeo
+    python main.py --video partida.mp4 --start 12:30 --speed 2   # pula até 12:30, 2x
     python main.py                       # radar simulado (sem jogo)
     python main.py --no-audio --no-db    # só a segunda tela
 
@@ -35,6 +36,27 @@ from src.vision.video_source import VideoSource
 log = logging.getLogger("fc-tactical-engine")
 
 
+def video_time(text: str) -> float:
+    """Posição no vídeo: segundos (750), mm:ss (12:30) ou hh:mm:ss (1:02:30)."""
+    try:
+        parts = [float(p) for p in text.split(":")]
+    except ValueError:
+        parts = []
+    if not 1 <= len(parts) <= 3 or any(p < 0 for p in parts):
+        raise argparse.ArgumentTypeError(f"tempo inválido: {text!r} (use 750, 12:30 ou 1:02:30)")
+    seconds = 0.0
+    for part in parts:
+        seconds = 60 * seconds + part
+    return seconds
+
+
+def positive(text: str) -> float:
+    value = float(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("precisa ser maior que zero")
+    return value
+
+
 def lan_ip() -> str | None:
     """IP desta máquina na rede local, para abrir o painel no tablet/celular."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -64,8 +86,8 @@ def telemetry_source(
     pipeline = VisionPipeline(teams=teams)
     frames: Iterable[CapturedFrame]
     if args.video:
-        video = VideoSource(args.video, rois)
-        frames = realtime(video, video.fps)
+        video = VideoSource(args.video, rois, start_s=args.start)
+        frames = realtime(video, video.fps * args.speed)  # lento demais? roda o mais rápido que der
     else:
         frames = screen_frames(stack.enter_context(ScreenCapture(rois)), stop)
     return (pipeline.process(frame) for frame in frames)
@@ -81,9 +103,14 @@ def parse_args() -> argparse.Namespace:
     origin = parser.add_mutually_exclusive_group()
     origin.add_argument("--screen", action="store_true", help="lê o jogo na tela (Windows)")
     origin.add_argument("--video", type=Path, help="lê um vídeo gravado da partida")
+    parser.add_argument("--start", type=video_time, default=0.0, help="com --video: 12:30")
+    parser.add_argument("--speed", type=positive, default=1.0, help="com --video: 2 = 2x")
     parser.add_argument("--team-a-blue", action="store_true", help="você é o círculo azul")
     parser.add_argument("--team-a-bottom", action="store_true", help="você é a linha de baixo")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.video and (args.start or args.speed != 1.0):
+        parser.error("--start e --speed só valem com --video")
+    return args
 
 
 def main() -> None:
